@@ -1,6 +1,6 @@
 # 概要
 最近在网上看到一篇[有趣的文章](https://medium.com/@jayaganesh1997/let-us-sort-25e41a4ba854)。
-说的是在归并排序中，可以将每个子数组的排序工作交给n个携程，再用n个携程将这些子数归并来降低时间复杂度。
+说的是在归并排序中，可以将每个子数组的排序工作交给 n 个协程，再用 n 个协程将这些子数组归并来降低时间复杂度。
 据说“可以将运行时间显著降为 O(N)。”
 
 这种说法是否可行呢？
@@ -9,32 +9,41 @@
 
 # 实验
 ## 电脑配置
+下面关于当前实现的耗时和内存，是在 Apple M2 上测的，benchmark 名称后缀为 `-8`。
+
+[Benchmark Data](https://github.com/shabaoma/Golang-Parallel-Merge-Sort/blob/master/result/%E5%AE%9E%E9%AA%8C%E7%BB%93%E6%9E%9C.txt) 和两张图是上一版实现的记录，机器为：
+
 * MacBook Pro (13-inch, 2016, Four Thunderbolt 3 Ports)
 * 2.9 GHz Intel Core i5
 * 8 GB 2133 MHz LPDDR3
 
+上一版的 MergeSortS、MergeSortSSC 每次 merge 都 `make` 一块新切片。MergeSortSSC 把数组固定切成 4 段，使用 6 个协程。
+
 ## 算法比较
-1. 快速排序（QuickSort）
-2. 归并排序（MergeSortS）
-3. 并行归并排序（用6个携程）（MergeSortSSC）
-4. 并行归并排序（用n个携程）（MergeSortJ）
+1. 快速排序（QuickSort）：标准库 `sort.Sort`，比较经 `sort.Interface` 调用
+2. 归并排序（MergeSortS）：顺序归并。两块长度为 n 的缓冲轮流写入，区间长度不超过 32 时用插入排序
+3. 并行归并排序（MergeSortSSC）：区间长度大于 10000，且递归深度不超过 floor(log2(GOMAXPROCS)) 时，左右两半并行
+4. 并行归并排序（MergeSortSC）：每个分治节点起协程，区间长度不超过 32 时停止分裂
+5. 并行归并排序（MergeSortJ）：元素经 channel 归并，分裂到长度不超过 1，协程数随 n 增长
 
 ## Benchmark
+上一版的原始输出：
+
 [Benchmark Data](https://github.com/shabaoma/Golang-Parallel-Merge-Sort/blob/master/result/%E5%AE%9E%E9%AA%8C%E7%BB%93%E6%9E%9C.txt)  
 ![CPU](https://raw.githubusercontent.com/shabaoma/Golang-Parallel-Merge-Sort/master/result/cpu.png)  
 ![MEM](https://raw.githubusercontent.com/shabaoma/Golang-Parallel-Merge-Sort/master/result/mem.png)
 
 ## 计算时间
-数组过小时 MergeSortJ > MergeSortSSC > QuickSort ≒ MergeSortS  
-数组够大时 MergeSortJ > QuickSort ≒ MergeSortS > MergeSortSSC
+长度不超过 10000 时，MergeSortSSC 与 MergeSortS 同级，二者快于 QuickSort，MergeSortJ 最慢。MergeSortSC 和 QuickSort 处在中间，先后随长度变化。  
+长度在 10^5 及以上时，MergeSortJ > QuickSort > MergeSortS > MergeSortSC > MergeSortSSC。
 
 ## 占用内存
-数组过小时 MergeSortJ > MergeSortSSC > MergeSortS > QuickSort  
-数组够大时 MergeSortJ > MergeSortSSC ≒ MergeSortS > QuickSort
+MergeSortJ > MergeSortSC > MergeSortSSC ≒ MergeSortS > QuickSort
 
 # 分析
-从结果上看，文章中所提到的方法并没有实现O(n)的计算时间，反而是最耗时的一种方法。  
-通过pprof我们可以看到MergeSortJ在每一次拆分和合并切片时都要创建一个携程，从而耗费了大量时间和内存。
+文章中的方法没有达到 O(n)。归并的总工作量仍是 O(n log n)，顶层 merge 仍是串行的 O(n)。MergeSortJ 每次分裂都创建 channel 和协程，所以它始终最慢。
+
+下面的 pprof 取自旧版 MergeSortJ，当时长度等于 1 才返回。时间主要花在创建 channel 和发送元素：
 ```
       50ms       50ms      7:func Sort(arr []int, ch chan int) {
       60ms       90ms      8:	defer close(ch)
@@ -58,8 +67,7 @@
 
 ```
 
-MergeSortS和MergeSortSSC的内存占用量几乎没有区别。都是用在了生成切片上，MergeSortSSC比MergeSortS仅多生成了6个携程。  
-但是MergeSortSSC的执行效率在数组足够长的情况下比普通快速排序和归并排序快了1.5倍。
+旧版 MergeSortS 和 MergeSortSSC 的内存几乎一样，分配都来自每一层 merge 的新切片，SSC 只多了 6 个协程。那一版在数组足够长时，SSC 的耗时大约是顺序归并和 `sort.Sort` 的 2/3。对应的 merge 如下：
 ```
       10ms       10ms     11:func merge(s1, s2 []int) []int {
          .      610ms     12:	s := make([]int, len(s1)+len(s2))
@@ -88,8 +96,9 @@ MergeSortS和MergeSortSSC的内存占用量几乎没有区别。都是用在了�
          .          .     35:}
 ```
 
-快速排序并没有消耗很多内存。生成初始数组用了O(n)的空间。  
-快速排序的时间主要用在了sort.doPivot函数上。
+当前 merge 写入已有的两块缓冲，不再每次 `make`。10^7 个 int 时，MergeSortS 和 MergeSortSSC 都是大约 160 MB；分配次数分别是 2 次和十余次。长度不超过 10000 时 SSC 不开协程。长度足够大时，SSC 的耗时大约是顺序归并的 1/4，大约是 `sort.Sort` 的 1/6。
+
+QuickSort 没有单独的快排实现。下面这段是旧工具链的 profile，时间主要在 `doPivot`。Go 1.19 起标准库改为 pdqsort，当前工具链里没有这个函数。`sort.Sort` 原地排序，这次 benchmark 把输入准备放在计时之外，计时区间里几乎没有额外分配。
 ```
          .       30ms    183:func quickSort(data Interface, a, b, maxDepth int) {
          .          .    184:	for b-a > 12 { // Use ShellSort for slices <= 12 elements
@@ -123,10 +132,10 @@ MergeSortS和MergeSortSSC的内存占用量几乎没有区别。都是用在了�
 ```
 
 # 结论
-文章所说的计算时间并不成立。因为创建携程需要消耗时间和内存。  
-如果数组不是很大时，并行归并排序并不能提高排序效率。  
-而当数组足够大时，同时排序子数组可以提高整体的排序速度。但是归并排序需要足够的内存。  
-快速排序在相同排序效率下用内存空间最少。但是很难通过并行的方法加快排序效率。
+文章所说的 O(n) 不成立。按元素创建协程和 channel，开销会随 n 增长。  
+数组长度不超过大约 10000 时，并行分治不会更快。  
+数组足够大时，只在有限深度上并行排序子区间，可以缩短时间。归并的额外内存是两块 O(n) 缓冲。  
+QuickSort 的额外内存最少。在这台 Apple M2 上，当前归并快于 `sort.Sort`。
 
 # 相关链接
 [A Comparison of Parallel Sorting Algorithms on Different Architectures](https://parasol.tamu.edu/publications/download.php?file_id=191)
