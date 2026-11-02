@@ -6,8 +6,10 @@ package merge_sort_j
 
 func Sort(arr []int, ch chan int) {
 	defer close(ch)
-	if len(arr) == 1 {
-		ch <- arr[0]
+	if len(arr) <= 1 {
+		if len(arr) == 1 {
+			ch <- arr[0]
+		}
 		return
 	}
 
@@ -34,7 +36,7 @@ func merge(s1, s2, ch chan int) {
 	v1, ok1 := <-s1
 	v2, ok2 := <-s2
 	for ok1 && ok2 {
-		if v1 < v2 {
+		if v1 <= v2 {
 			update(s1, ch, &v1, &ok1)
 		} else {
 			update(s2, ch, &v2, &ok2)

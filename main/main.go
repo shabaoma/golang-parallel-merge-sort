@@ -2,17 +2,16 @@ package main
 
 import (
 	"math/rand"
-	"time"
 )
 
 func main() {
 }
 
 func GenerateSlice(size int) []int {
-	s := make([]int, size, size)
-	rand.Seed(time.Now().UnixNano())
+	r := rand.New(rand.NewSource(1))
+	s := make([]int, size)
 	for i := 0; i < size; i++ {
-		s[i] = rand.Intn(99999) - rand.Intn(99999)
+		s[i] = r.Int()
 	}
 	return s
 }

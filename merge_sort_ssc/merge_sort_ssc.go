@@ -1,64 +1,97 @@
 package merge_sort_ssc
 
+import (
+	"math/bits"
+	"runtime"
+	"sync"
+)
+
+const (
+	insertionCutoff   = 32
+	parallelThreshold = 10000
+)
+
 func Sort(s []int) []int {
-	l_ch, r_ch, res := make(chan []int), make(chan []int), make(chan []int)
-	quarter := len(s) >> 2
-	mid := len(s) >> 1
-	t_quarter := quarter + mid
-
-	go func() {
-		l_ch <- goSort(s[:quarter])
-	}()
-	go func() {
-		l_ch <- goSort(s[quarter:mid])
-	}()
-	go func() {
-		r_ch <- goSort(s[mid:t_quarter])
-	}()
-	go func() {
-		r_ch <- goSort(s[t_quarter:])
-	}()
-
-	go func() {
-		res <- merge(<-l_ch, <-l_ch)
-	}()
-	go func() {
-		res <- merge(<-r_ch, <-r_ch)
-	}()
-
-	return merge(<-res, <-res)
-}
-
-func goSort(s []int) []int {
-	if len(s) == 1 {
+	n := len(s)
+	if n <= 1 {
 		return s
 	}
-	mid := len(s) >> 1
-	return merge(goSort(s[:mid]), goSort(s[mid:]))
+	dst := make([]int, n)
+	src := make([]int, n)
+	copy(dst, s)
+	copy(src, s)
+	parallel(src, dst, 0, n, parallelDepth())
+	return dst
 }
 
-func merge(s1, s2 []int) []int {
-	s := make([]int, len(s1)+len(s2))
-	i, j, k := 0, 0, 0
-	for i < len(s1) && j < len(s2) {
-		if s1[i] < s2[j] {
-			s[k] = s1[i]
+func parallelDepth() int {
+	p := runtime.GOMAXPROCS(0)
+	if p <= 1 {
+		return 0
+	}
+	return bits.Len(uint(p)) - 1
+}
+
+func parallel(src, dst []int, lo, hi, depth int) {
+	if depth <= 0 || hi-lo <= parallelThreshold {
+		sequential(src, dst, lo, hi)
+		return
+	}
+	mid := lo + (hi-lo)>>1
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		parallel(dst, src, lo, mid, depth-1)
+	}()
+	parallel(dst, src, mid, hi, depth-1)
+	wg.Wait()
+	merge(src, dst, lo, mid, hi)
+}
+
+func sequential(src, dst []int, lo, hi int) {
+	if hi-lo <= insertionCutoff {
+		insertion(dst, lo, hi)
+		return
+	}
+	mid := lo + (hi-lo)>>1
+	sequential(dst, src, lo, mid)
+	sequential(dst, src, mid, hi)
+	merge(src, dst, lo, mid, hi)
+}
+
+func insertion(a []int, lo, hi int) {
+	for i := lo + 1; i < hi; i++ {
+		v := a[i]
+		j := i
+		for j > lo && a[j-1] > v {
+			a[j] = a[j-1]
+			j--
+		}
+		a[j] = v
+	}
+}
+
+func merge(src, dst []int, lo, mid, hi int) {
+	i, j, k := lo, mid, lo
+	for i < mid && j < hi {
+		if src[i] <= src[j] {
+			dst[k] = src[i]
 			i++
 		} else {
-			s[k] = s2[j]
+			dst[k] = src[j]
 			j++
 		}
 		k++
 	}
-	for i < len(s1) {
-		s[k] = s1[i]
+	for i < mid {
+		dst[k] = src[i]
 		i++
 		k++
 	}
-	for j < len(s2) {
-		s[k] = s2[j]
+	for j < hi {
+		dst[k] = src[j]
 		j++
 		k++
 	}
-	return s
 }

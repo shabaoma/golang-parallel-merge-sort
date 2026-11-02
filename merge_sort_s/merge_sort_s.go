@@ -1,35 +1,63 @@
 package merge_sort_s
 
+const insertionCutoff = 32
+
 func Sort(s []int) []int {
-	if len(s) == 1 {
+	n := len(s)
+	if n <= 1 {
 		return s
 	}
-	mid := len(s) >> 1
-	return merge(Sort(s[:mid]), Sort(s[mid:]))
+	dst := make([]int, n)
+	src := make([]int, n)
+	copy(dst, s)
+	copy(src, s)
+	sequential(src, dst, 0, n)
+	return dst
 }
 
-func merge(s1, s2 []int) []int {
-	s := make([]int, len(s1)+len(s2))
-	i, j, k := 0, 0, 0
-	for i < len(s1) && j < len(s2) {
-		if s1[i] < s2[j] {
-			s[k] = s1[i]
+func sequential(src, dst []int, lo, hi int) {
+	if hi-lo <= insertionCutoff {
+		insertion(dst, lo, hi)
+		return
+	}
+	mid := lo + (hi-lo)>>1
+	sequential(dst, src, lo, mid)
+	sequential(dst, src, mid, hi)
+	merge(src, dst, lo, mid, hi)
+}
+
+func insertion(a []int, lo, hi int) {
+	for i := lo + 1; i < hi; i++ {
+		v := a[i]
+		j := i
+		for j > lo && a[j-1] > v {
+			a[j] = a[j-1]
+			j--
+		}
+		a[j] = v
+	}
+}
+
+func merge(src, dst []int, lo, mid, hi int) {
+	i, j, k := lo, mid, lo
+	for i < mid && j < hi {
+		if src[i] <= src[j] {
+			dst[k] = src[i]
 			i++
 		} else {
-			s[k] = s2[j]
+			dst[k] = src[j]
 			j++
 		}
 		k++
 	}
-	for i < len(s1) {
-		s[k] = s1[i]
+	for i < mid {
+		dst[k] = src[i]
 		i++
 		k++
 	}
-	for j < len(s2) {
-		s[k] = s2[j]
+	for j < hi {
+		dst[k] = src[j]
 		j++
 		k++
 	}
-	return s
 }
